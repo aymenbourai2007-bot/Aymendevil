@@ -11,19 +11,22 @@ PAGE_ACCESS_TOKEN = os.environ.get('PAGE_ACCESS_TOKEN', 'YOUR_PAGE_ACCESS_TOKEN_
 
 # عناوين الـ API
 AI_API_URL = "https://vetrex.x10.mx/api/gpt4.php"
-IMAGE_API_URL = "https://sii3.top/api/imagen-3.php"
 
-# قاموس لتخزين حالة المستخدم (لمعرفة متى ينتظر البوت وصف صورة)
-# (ملاحظة: هذا يعمل كحل بسيط لـ Vercel، لكن في تطبيقات الإنتاج الكبيرة يفضل استخدام قواعد بيانات أو Redis)
-user_states = {} 
+# الوصف الخاص بالمطور (الرد المخصص)
+AYMEN_DESCRIPTION = (
+    "نعم، aymen bourai هو مطوري! وهو: "
+    "شاب مبرمج بعمر 18 سنة، متخصص في تطوير البوتات والحلول السيبرانية، يمتلك خبرة قوية "
+    "في Python وHTML. يعمل بشكل مستقل ويتميز بدقة عالية وقدرة على ابتكار حلول ذكية وسريعة. "
+    "يحب بناء أنظمة فعّالة وأتمتة المهام بابتكار، ويحرص دائمًا على تطوير مهاراته ومواكبة تقنيات البرمجة الحديثة."
+)
 
 app = Flask(__name__)
 
 # ------------------------------------
-# دوال إرسال الرسائل والصور
+# دالة إرسال رسالة نصية
 # ------------------------------------
-def send_message(recipient_id, message_text, quick_replies=None):
-    """إرسال رسالة نصية مع خيار إضافة أزرار الرد السريع."""
+def send_message(recipient_id, message_text):
+    """إرسال رسالة نصية إلى المستخدم."""
     params = {"access_token": PAGE_ACCESS_TOKEN}
     headers = {"Content-Type": "application/json"}
     
@@ -32,34 +35,6 @@ def send_message(recipient_id, message_text, quick_replies=None):
         "message": {"text": message_text}
     }
 
-    if quick_replies:
-        data["message"]["quick_replies"] = quick_replies
-
-    requests.post(
-        "https://graph.facebook.com/v18.0/me/messages",
-        params=params,
-        headers=headers,
-        data=json.dumps(data)
-    )
-
-def send_image(recipient_id, image_url):
-    """إرسال رابط الصورة ليعرض كصورة مرئية في المحادثة."""
-    params = {"access_token": PAGE_ACCESS_TOKEN}
-    headers = {"Content-Type": "application/json"}
-    
-    data = {
-        "recipient": {"id": recipient_id},
-        "message": {
-            "attachment": {
-                "type": "image",
-                "payload": {
-                    "url": image_url,
-                    "is_reusable": True
-                }
-            }
-        }
-    }
-    
     requests.post(
         "https://graph.facebook.com/v18.0/me/messages",
         params=params,
@@ -68,7 +43,7 @@ def send_image(recipient_id, image_url):
     )
 
 # ------------------------------------
-# دوال استدعاء API
+# دالة استدعاء API الذكاء الاصطناعي
 # ------------------------------------
 def get_ai_response(text):
     """استدعاء API الذكاء الاصطناعي والحصول على الإجابة (answer) فقط."""
@@ -76,23 +51,13 @@ def get_ai_response(text):
         response = requests.get(f"{AI_API_URL}?text={text}")
         response.raise_for_status()
         data = response.json()
-        answer = data.get("answer", "عذراً، لم أتمكن من الحصول على جواب واضح.")
+        
+        # استخلاص الجواب من حقل "answer" كما طلبت
+        answer = data.get("answer", "عذراً، لم أتمكن من الحصول على جواب واضح من الذكاء الاصطناعي.")
         return answer
     except Exception as e:
         print(f"Error calling AI API: {e}")
         return "حدث خطأ في الاتصال بخدمة الذكاء الاصطناعي."
-
-def get_image_url(prompt):
-    """استدعاء API إنشاء الصور والحصول على رابط الصورة (image)."""
-    try:
-        response = requests.get(f"{IMAGE_API_URL}?text={prompt}&aspect_ratio=1:1&style=Auto")
-        response.raise_for_status()
-        res_data = response.json()
-        image_url = res_data.get("image")
-        return image_url
-    except Exception as e:
-        print(f"Error calling Image API: {e}")
-        return None
 
 # ------------------------------------
 # مسار الـ Webhook
@@ -111,6 +76,7 @@ def webhook():
             return 'Verification token mismatch', 403
 
     elif request.method == 'POST':
+        # --- معالجة الرسائل الواردة ---
         data = request.get_json()
 
         if data.get("object") == "page":
@@ -118,70 +84,21 @@ def webhook():
                 for messaging_event in entry.get("messaging", []):
                     sender_id = messaging_event["sender"]["id"]
 
-                    # ----------------------------------------------------
-                    # 1. معالجة الضغط على زر الرد السريع (Quick Reply)
-                    # ----------------------------------------------------
-                    # هذا الجزء يُعالج الحدث الذي يأتي عندما يضغط المستخدم على الزر
-                    if messaging_event.get("message") and messaging_event["message"].get("quick_reply"):
-                        payload = messaging_event["message"]["quick_reply"]["payload"]
-
-                        if payload == "IMAGE_MODE_PROMPT":
-                            # عند الضغط على زر "إنشاء صورة"
-                            
-                            # نضع حالة للمستخدم لكي نعرف أن رسالته القادمة هي وصف صورة
-                            user_states[sender_id] = "waiting_for_image_prompt"
-                            
-                            # الرد الذي طلبته بالضبط: "أرسل لي وصف من فضلك"
-                            send_message(sender_id, "ارسل لي الوصف لإنشاء صورة لكن ارسل الوصف بانجليزية فقط لكي انشئ صورة نعتذر لذلك 🤖")
-                            continue # التوقف هنا وانتظار الرسالة القادمة (الوصف)
-
-                    # ----------------------------------------------------
-                    # 2. معالجة الرسائل النصية العادية
-                    # ----------------------------------------------------
                     if messaging_event.get("message") and messaging_event["message"].get("text"):
                         message_text = messaging_event["message"]["text"].strip()
                         lower_text = message_text.lower()
                         
-                        # --- معالجة حالة انتظار وصف الصورة ---
-                        # يتحقق: هل المستخدم في وضع "انتظار الوصف"؟
-                        if user_states.get(sender_id) == "waiting_for_image_prompt":
-                            # المستخدم أرسل الوصف الآن
-                            prompt = message_text
-                            send_message(sender_id, f"جارٍ إنشاء الصورة لوصف: {prompt}...")
-                            
-                            image_url = get_image_url(prompt)
-                            
-                            if image_url:
-                                # إرسال الصورة للمستخدم (تظهر مرئية في المحادثة)
-                                send_image(sender_id, image_url)
-                            else:
-                                send_message(sender_id, "عذراً، لم أتمكن من إنشاء الصورة الآن. يرجى محاولة وصف آخر.")
-                            
-                            # إزالة حالة المستخدم بعد الانتهاء
-                            if sender_id in user_states:
-                                del user_states[sender_id] 
-                            continue
-
-                        # --- الردود الخاصة (المطور) ---
-                        if any(phrase in lower_text for phrase in ["مطورك", "من أنشئك", "من أنتجك", "من صممك"]):
-                            response_text = "**aymen bourai** هو مطوري، وأنا مساعد له ومتاح لخدمتك."
-                            send_message(sender_id, response_text)
+                        # --- الرد الخاص بـ aymen bourai ---
+                        # التحقق من ذكر كلمة "aymen bourai" أو السؤال عن المطور
+                        if "aymen bourai" in lower_text or \
+                           any(phrase in lower_text for phrase in ["مطورك", "من أنشئك", "من أنتجك", "من صممك"]):
+                            send_message(sender_id, AYMEN_DESCRIPTION)
                             continue 
                         
                         # --- الرد الأساسي (الذكاء الاصطناعي) ---
                         if message_text:
                             ai_answer = get_ai_response(message_text)
-                            
-                            # إعداد زر "إنشاء صور" كـ Quick Reply
-                            quick_replies = [
-                                {
-                                    "content_type": "text",
-                                    "title": "🖼️إنشاء صور",
-                                    "payload": "IMAGE_MODE_PROMPT" 
-                                }
-                            ]
-                            
-                            send_message(sender_id, ai_answer, quick_replies=quick_replies)
+                            send_message(sender_id, ai_answer)
 
         return 'EVENT_RECEIVED', 200
 
