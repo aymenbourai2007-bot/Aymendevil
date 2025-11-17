@@ -4,9 +4,10 @@ from flask import Flask, request
 import requests
 
 # --- الإعدادات الأساسية ---
-# توكن التحقق الخاص بك لـ Webhook: aymen 2007
-VERIFY_TOKEN = "aymen 2007" 
-# رمز الوصول للصفحة (يفضل استخدامه من متغيرات البيئة)
+# توكن التحقق الجديد لـ Webhook
+VERIFY_TOKEN = "boykta 2023" 
+# رمز الوصول للصفحة (يجب الحصول عليه من فيسبوك)
+# يفضل استخدامه من متغيرات البيئة (Environment Variable) في Vercel
 PAGE_ACCESS_TOKEN = os.environ.get('PAGE_ACCESS_TOKEN', 'YOUR_PAGE_ACCESS_TOKEN_HERE') 
 
 # عناوين الـ API
@@ -28,7 +29,7 @@ def send_message(recipient_id, message_text, quick_replies=None):
         "message": {"text": message_text}
     }
 
-    # إضافة أزرار الرد السريع
+    # إضافة أزرار الرد السريع (Quick Replies)
     if quick_replies:
         data["message"]["quick_replies"] = quick_replies
 
@@ -77,7 +78,7 @@ def get_ai_response(text):
     try:
         # بناء URL واستدعاء API
         response = requests.get(f"{AI_API_URL}?text={text}")
-        response.raise_for_status() # التأكد من أن الكود 200
+        response.raise_for_status()
         
         data = response.json()
         
@@ -141,20 +142,20 @@ def webhook():
                         lower_text = message_text.lower()
                         
                         # --- الأزرار / الردود السريعة (Quick Replies) ---
-                        # التحقق من الضغط على زر إنشاء صورة سابقاً
+                        # التحقق من الضغط على زر إنشاء صورة
                         if message.get("quick_reply"):
                             payload = message["quick_reply"]["payload"]
                             if payload == "IMAGE_MODE_PROMPT":
-                                # إذا ضغط المستخدم على الزر، سيتم إرسال رسالة "أرجو كتابة الوصف الآن" 
-                                # وفي هذه الحالة، الرسالة الفعلية هي وصف الصورة
+                                # عندما يضغط المستخدم على الزر، الرسالة التالية هي وصف الصورة
+                                # لذا نستخدم الرسالة الحالية (message_text) كـ prompt
                                 send_message(sender_id, f"جارٍ إنشاء الصورة لوصف: {message_text}...")
                                 image_url = get_image_url(message_text)
                                 
                                 if image_url:
                                     send_image(sender_id, image_url)
                                 else:
-                                    send_message(sender_id, "عذراً، لم أتمكن من إنشاء الصورة الآن.")
-                                continue # إنهاء معالجة هذا الحدث
+                                    send_message(sender_id, "عذراً، لم أتمكن من إنشاء الصورة الآن. يرجى تجربة وصف آخر.")
+                                continue 
 
                         # --- الردود الخاصة (المطور) ---
                         if any(phrase in lower_text for phrase in ["مطورك", "من أنشئك", "من أنتجك", "من صممك"]):
@@ -172,7 +173,7 @@ def webhook():
                                 {
                                     "content_type": "text",
                                     "title": "🖼️ إنشاء صورة بالذكاء الاصطناعي",
-                                    "payload": "IMAGE_MODE_PROMPT" # Payload للإشارة إلى أن الرسالة القادمة هي وصف صورة
+                                    "payload": "IMAGE_MODE_PROMPT" # payload لكي نعرف أن الرسالة القادمة هي وصف صورة
                                 }
                             ]
                             
@@ -182,11 +183,8 @@ def webhook():
         return 'EVENT_RECEIVED', 200
 
 # ------------------------------------
-# نقطة الدخول في Vercel
+# تشغيل التطبيق (محلياً، Vercel سيتولى التنفيذ بعد النشر)
 # ------------------------------------
-# في Vercel، يتم استخدام هذا السطر لتهيئة التطبيق للتشغيل
 if __name__ == '__main__':
-    # تشغيل محلي للاختبار
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
-
