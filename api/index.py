@@ -4,16 +4,17 @@ from flask import Flask, request
 import requests
 
 # --- الإعدادات الأساسية ---
-# توكن التحقق الجديد لـ Webhook
+# توكن التحقق (Webhook Verification Token)
 VERIFY_TOKEN = "boykta 2023" 
 # رمز الوصول للصفحة (يجب الحصول عليه من فيسبوك)
-# يفضل استخدامه من متغيرات البيئة (Environment Variable) في Vercel
+# يفضل بشدة وضعه كمتغير بيئة (Environment Variable) في Vercel
 PAGE_ACCESS_TOKEN = os.environ.get('PAGE_ACCESS_TOKEN', 'YOUR_PAGE_ACCESS_TOKEN_HERE') 
 
 # عناوين الـ API
 AI_API_URL = "https://vetrex.x10.mx/api/gpt4.php"
 IMAGE_API_URL = "https://sii3.top/api/imagen-3.php"
 
+# يتم استخدام Flask لإنشاء خادم الويب على Vercel
 app = Flask(__name__)
 
 # ------------------------------------
@@ -52,6 +53,7 @@ def send_image(recipient_id, image_url):
     data = {
         "recipient": {"id": recipient_id},
         "message": {
+            # استخدام Attachment Type: image لإرسال الصورة، وهو مدعوم في Messenger و Lite
             "attachment": {
                 "type": "image",
                 "payload": {
@@ -76,7 +78,6 @@ def send_image(recipient_id, image_url):
 def get_ai_response(text):
     """استدعاء API الذكاء الاصطناعي والحصول على الإجابة (answer) فقط."""
     try:
-        # بناء URL واستدعاء API
         response = requests.get(f"{AI_API_URL}?text={text}")
         response.raise_for_status()
         
@@ -95,7 +96,7 @@ def get_ai_response(text):
 def get_image_url(prompt):
     """استدعاء API إنشاء الصور والحصول على رابط الصورة (image)."""
     try:
-        # بناء URL واستدعاء API
+        # استخدام التنسيق المطلوب
         response = requests.get(f"{IMAGE_API_URL}?text={prompt}&aspect_ratio=1:1&style=Auto")
         response.raise_for_status()
         
@@ -110,7 +111,7 @@ def get_image_url(prompt):
         return None
 
 # ------------------------------------
-# مسار الـ Webhook
+# مسار الـ Webhook (لاستقبال طلبات فيسبوك)
 # ------------------------------------
 @app.route('/', methods=['GET', 'POST'])
 def webhook():
@@ -141,17 +142,18 @@ def webhook():
                         message_text = message.get("text", "").strip()
                         lower_text = message_text.lower()
                         
-                        # --- الأزرار / الردود السريعة (Quick Replies) ---
-                        # التحقق من الضغط على زر إنشاء صورة
+                        # --- منطق إنشاء الصور (الخطوة 2: استقبال الوصف) ---
+                        # يتم التحقق هنا مما إذا كانت الرسالة الحالية هي رد على زر "إنشاء صورة"
                         if message.get("quick_reply"):
                             payload = message["quick_reply"]["payload"]
                             if payload == "IMAGE_MODE_PROMPT":
-                                # عندما يضغط المستخدم على الزر، الرسالة التالية هي وصف الصورة
-                                # لذا نستخدم الرسالة الحالية (message_text) كـ prompt
-                                send_message(sender_id, f"جارٍ إنشاء الصورة لوصف: {message_text}...")
-                                image_url = get_image_url(message_text)
+                                # الرسالة الحالية هي وصف الصورة
+                                prompt = message_text
+                                send_message(sender_id, f"جارٍ إنشاء الصورة لوصف: {prompt}...")
+                                image_url = get_image_url(prompt)
                                 
                                 if image_url:
+                                    # إرسال الصورة مباشرة للمستخدم
                                     send_image(sender_id, image_url)
                                 else:
                                     send_message(sender_id, "عذراً، لم أتمكن من إنشاء الصورة الآن. يرجى تجربة وصف آخر.")
@@ -168,12 +170,12 @@ def webhook():
                             # 1. الحصول على الرد من API
                             ai_answer = get_ai_response(message_text)
                             
-                            # 2. إعداد زر "إنشاء صور" كـ Quick Reply
+                            # 2. إعداد زر "إنشاء صور" كـ Quick Reply (الخطوة 1: ظهور الزر)
                             quick_replies = [
                                 {
                                     "content_type": "text",
                                     "title": "🖼️ إنشاء صورة بالذكاء الاصطناعي",
-                                    "payload": "IMAGE_MODE_PROMPT" # payload لكي نعرف أن الرسالة القادمة هي وصف صورة
+                                    "payload": "IMAGE_MODE_PROMPT" # Payload للإشارة إلى أن الرسالة القادمة هي وصف صورة
                                 }
                             ]
                             
@@ -183,7 +185,7 @@ def webhook():
         return 'EVENT_RECEIVED', 200
 
 # ------------------------------------
-# تشغيل التطبيق (محلياً، Vercel سيتولى التنفيذ بعد النشر)
+# تشغيل التطبيق (نقطة الدخول في Vercel)
 # ------------------------------------
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
