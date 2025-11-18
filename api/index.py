@@ -1,5 +1,6 @@
 import os
 import json
+import urllib.parse
 from flask import Flask, request
 import requests
 
@@ -7,10 +8,12 @@ import requests
 # توكن التحقق (Webhook Verification Token)
 VERIFY_TOKEN = "boykta 2023" 
 # رمز الوصول للصفحة (يجب الحصول عليه من فيسبوك)
+# يرجى تعيينه كمتغير بيئة (Environment Variable) في Vercel
 PAGE_ACCESS_TOKEN = os.environ.get('PAGE_ACCESS_TOKEN', 'YOUR_PAGE_ACCESS_TOKEN_HERE') 
 
 # عناوين الـ API
-AI_API_URL = "https://sii3.top/api/openai.php?gpt-5-mini="
+# المسار الأساسي لـ API gpt-5-mini
+AI_API_BASE_URL = "https://sii3.top/api/openai.php?gpt-5-mini="
 
 # الوصف الخاص بالمطور (الرد المخصص)
 AYMEN_DESCRIPTION = (
@@ -26,7 +29,7 @@ app = Flask(__name__)
 # دالة إرسال رسالة نصية
 # ------------------------------------
 def send_message(recipient_id, message_text):
-    """إرسال رسالة نصية إلى المستخدم."""
+    """إرسال رسالة نصية إلى المستخدم أو المجموعة."""
     params = {"access_token": PAGE_ACCESS_TOKEN}
     headers = {"Content-Type": "application/json"}
     
@@ -48,8 +51,13 @@ def send_message(recipient_id, message_text):
 def get_ai_response(text):
     """استدعاء API الذكاء الاصطناعي والحصول على الإجابة (answer) فقط."""
     try:
-        response = requests.get(f"{AI_API_URL}?text={text}")
-        response.raise_for_status()
+        # تأكد من ترميز النص بشكل صحيح قبل إضافته إلى URL
+        encoded_text = urllib.parse.quote(text)
+        
+        # بناء URL وإرسال الطلب
+        response = requests.get(f"{AI_API_BASE_URL}{encoded_text}")
+        response.raise_for_status() # للتعامل مع الأخطاء مثل 4xx أو 5xx
+        
         data = response.json()
         
         # استخلاص الجواب من حقل "answer" كما طلبت
@@ -57,7 +65,7 @@ def get_ai_response(text):
         return answer
     except Exception as e:
         print(f"Error calling AI API: {e}")
-        return "حدث خطأ في الاتصال بخدمة الذكاء الاصطناعي."
+        return "حدث خطأ في الاتصال بخدمة الذكاء الاصطناعي، يرجى المحاولة لاحقاً."
 
 # ------------------------------------
 # مسار الـ Webhook
