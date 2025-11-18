@@ -1,94 +1,121 @@
-from flask import Flask, request, jsonify
-import requests
-import json
 import os
+import json
+import urllib.parse
+from flask import Flask, request
+import requests
+
+# --- الإعدادات الأساسية ---
+# توكن التحقق (Webhook Verification Token)
+VERIFY_TOKEN = "boykta 2023" 
+# رمز الوصول للصفحة (يجب الحصول عليه من فيسبوك)
+# هام: يرجى تعيينه كمتغير بيئة (Environment Variable) في Vercel باسم PAGE_ACCESS_TOKEN
+PAGE_ACCESS_TOKEN = os.environ.get('PAGE_ACCESS_TOKEN', 'YOUR_PAGE_ACCESS_TOKEN_HERE') 
+
+# عناوين الـ API
+# تم تحديثه إلى API Grok4
+AI_API_BASE_URL = "https://sii3.top/api/grok4.php?text="
+
+# الوصف الخاص بالمطور (الرد المخصص)
+AYMEN_DESCRIPTION = (
+    "نعم، aymen bourai هو مطوري! وهو: "
+    "شاب مبرمج بعمر 18 سنة، متخصص في تطوير البوتات والحلول السيبرانية، يمتلك خبرة قوية "
+    "في Python وHTML. يعمل بشكل مستقل ويتميز بدقة عالية وقدرة على ابتكار حلول ذكية وسريعة. "
+    "يحب بناء أنظمة فعّالة وأتمتة المهام بابتكار، ويحرص دائمًا على تطوير مهاراته ومواكبة تقنيات البرمجة الحديثة."
+)
 
 app = Flask(__name__)
 
-# رابط API الذكاء الاصطناعي
-AI_API_URL = "https://sii3.top/api/grok4.php?text="
-
-@app.route('/webhook', methods=['GET', 'POST'])
-def webhook():
-    if request.method == 'GET':
-        # التحقق من webhook
-        verify_token = request.args.get('hub.verify_token')
-        challenge = request.args.get('hub.challenge')
-        
-        if verify_token == 'boykta2023':
-            return challenge
-        else:
-            return 'Verification token mismatch', 403
-    
-    elif request.method == 'POST':
-        data = request.get_json()
-        
-        if data.get('object') == 'page':
-            for entry in data.get('entry', []):
-                for messaging_event in entry.get('messaging', []):
-                    if messaging_event.get('message'):
-                        sender_id = messaging_event['sender']['id']
-                        message_text = messaging_event['message'].get('text', '')
-                        
-                        # معالجة الرسالة
-                        response_text = process_message(message_text)
-                        
-                        # إرسال الرد
-                        send_message(sender_id, response_text)
-        
-        return 'OK', 200
-
-def process_message(message_text):
-    message_text_lower = message_text.lower().strip()
-    
-    # الرد على الأسئلة عن المطور
-    developer_keywords = ['مطورك', 'أنشئك', 'أنتجك', 'صممك', 'من صنعك', 'من أنشأك', 'aymen bourai']
-    
-    if any(keyword in message_text_lower for keyword in developer_keywords) or 'aymen bourai' in message_text_lower:
-        return "نعم Aymen Bouraoui هو مطوري. شاب مبرمج بعمر 18 سنة، متخصص في تطوير البوتات والحلول السيبرانية، يمتلك خبرة قوية في Python وHTML. يعمل بشكل مستقل ويتميز بدقة عالية وقدرة على ابتكار حلول ذكية وسريعة. يحب بناء أنظمة فعّالة وأتمتة المهام بابتكار، ويحرص دائمًا على تطوير مهاراته ومواكبة تقنيات البرمجة الحديثة."
-    
-    # استخدام API الذكاء الاصطناعي للأسئلة الأخرى
-    try:
-        response = requests.get(f"{AI_API_URL}{message_text}")
-        if response.status_code == 200:
-            ai_data = response.json()
-            # استخراج الإجابة من JSON
-            answer = ai_data.get('answer', ai_data.get('response', 'لم أتمكن من معالجة سؤالك.'))
-            return answer
-        else:
-            return "عذرًا، حدث خطأ في معالجة طلبك."
-    except Exception as e:
-        return "عذرًا، حدث خطأ في الاتصال بالذكاء الاصطناعي."
-
+# ------------------------------------
+# دالة إرسال رسالة نصية
+# ------------------------------------
 def send_message(recipient_id, message_text):
-    page_access_token = os.environ.get('PAGE_ACCESS_TOKEN')
-    
-    if not page_access_token:
-        print("Warning: PAGE_ACCESS_TOKEN not set")
-        return
+    """إرسال رسالة نصية إلى المستخدم أو المجموعة."""
+    params = {"access_token": PAGE_ACCESS_TOKEN}
+    headers = {"Content-Type": "application/json"}
     
     data = {
         "recipient": {"id": recipient_id},
         "message": {"text": message_text}
     }
-    
-    headers = {
-        "Content-Type": "application/json"
-    }
-    
-    url = f"https://graph.facebook.com/v19.0/me/messages?access_token={page_access_token}"
-    
+
+    requests.post(
+        "https://graph.facebook.com/v18.0/me/messages",
+        params=params,
+        headers=headers,
+        data=json.dumps(data)
+    )
+
+# ------------------------------------
+# دالة استدعاء API الذكاء الاصطناعي
+# ------------------------------------
+def get_ai_response(text):
+    """استدعاء API الذكاء الاصطناعي والحصول على الإجابة (answer) فقط."""
     try:
-        response = requests.post(url, json=data, headers=headers)
-        if response.status_code != 200:
-            print(f"Error sending message: {response.status_code} - {response.text}")
+        # ترميز النص لضمان عمل الروابط مع الأحرف العربية والمسافات
+        encoded_text = urllib.parse.quote(text)
+        
+        # بناء URL وإرسال الطلب
+        response = requests.get(f"{AI_API_BASE_URL}{encoded_text}")
+        response.raise_for_status() # لرفع استثناء عند وجود أخطاء في الـ API
+        
+        data = response.json()
+        
+        # استخلاص الجواب من حقل "answer" كما طلبت
+        answer = data.get("answer", "عذراً، لم أتمكن من الحصول على جواب واضح من الذكاء الاصطناعي.")
+        return answer
+    except requests.exceptions.HTTPError as e:
+        print(f"HTTP Error calling API: {e}. Check API status.")
+        return "حدث خطأ في الاتصال بخدمة الذكاء الاصطناعي، يرجى المحاولة لاحقاً."
     except Exception as e:
-        print(f"Exception in send_message: {e}")
+        print(f"Error calling AI API: {e}")
+        return "حدث خطأ غير متوقع أثناء معالجة الطلب."
 
-@app.route('/')
-def home():
-    return "Facebook Bot is running!"
+# ------------------------------------
+# مسار الـ Webhook
+# ------------------------------------
+@app.route('/', methods=['GET', 'POST'])
+def webhook():
+    if request.method == 'GET':
+        # --- التحقق من الـ Webhook ---
+        mode = request.args.get('hub.mode')
+        token = request.args.get('hub.verify_token')
+        challenge = request.args.get('hub.challenge')
+        
+        if mode and token and mode == 'subscribe' and token == VERIFY_TOKEN:
+            return challenge, 200
+        else:
+            return 'Verification token mismatch', 403
 
+    elif request.method == 'POST':
+        # --- معالجة الرسائل الواردة ---
+        data = request.get_json()
+
+        if data.get("object") == "page":
+            for entry in data.get("entry", []):
+                for messaging_event in entry.get("messaging", []):
+                    sender_id = messaging_event["sender"]["id"]
+
+                    if messaging_event.get("message") and messaging_event["message"].get("text"):
+                        message_text = messaging_event["message"]["text"].strip()
+                        lower_text = message_text.lower()
+                        
+                        # --- الرد الخاص بـ aymen bourai ---
+                        # التحقق من ذكر كلمة "aymen bourai" أو السؤال عن المطور
+                        if "aymen bourai" in lower_text or \
+                           any(phrase in lower_text for phrase in ["مطورك", "من أنشئك", "من أنتجك", "من صممك"]):
+                            send_message(sender_id, AYMEN_DESCRIPTION)
+                            continue 
+                        
+                        # --- الرد الأساسي (الذكاء الاصطناعي) ---
+                        if message_text:
+                            ai_answer = get_ai_response(message_text)
+                            send_message(sender_id, ai_answer)
+
+        return 'EVENT_RECEIVED', 200
+
+# ------------------------------------
+# تشغيل التطبيق 
+# ------------------------------------
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
+    port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
