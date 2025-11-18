@@ -13,7 +13,7 @@ PAGE_ACCESS_TOKEN = os.environ.get('PAGE_ACCESS_TOKEN', 'YOUR_PAGE_ACCESS_TOKEN_
 
 # عناوين الـ API
 # المسار الأساسي لـ API gpt-5-mini
-AI_API_BASE_URL = "https://sii3.top/api/openai.php?gpt-5-mini="
+AI_API_BASE_URL = "https://sii3.top/api/openai.php?gpt-5-mini"
 
 # الوصف الخاص بالمطور (الرد المخصص)
 AYMEN_DESCRIPTION = (
