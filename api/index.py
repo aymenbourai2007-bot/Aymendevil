@@ -1,6 +1,5 @@
 import os
 import json
-import urllib.parse
 from flask import Flask, request
 import requests
 
@@ -8,12 +7,10 @@ import requests
 # توكن التحقق (Webhook Verification Token)
 VERIFY_TOKEN = "boykta 2023" 
 # رمز الوصول للصفحة (يجب الحصول عليه من فيسبوك)
-# هام: يرجى تعيينه كمتغير بيئة (Environment Variable) في Vercel باسم PAGE_ACCESS_TOKEN
 PAGE_ACCESS_TOKEN = os.environ.get('PAGE_ACCESS_TOKEN', 'YOUR_PAGE_ACCESS_TOKEN_HERE') 
 
 # عناوين الـ API
-# تم تحديثه إلى API Grok4
-AI_API_BASE_URL = "https://sii3.top/api/grok4.php?text="
+AI_API_URL = "https://vetrex.x10.mx/api/gpt4.php"
 
 # الوصف الخاص بالمطور (الرد المخصص)
 AYMEN_DESCRIPTION = (
@@ -29,7 +26,7 @@ app = Flask(__name__)
 # دالة إرسال رسالة نصية
 # ------------------------------------
 def send_message(recipient_id, message_text):
-    """إرسال رسالة نصية إلى المستخدم أو المجموعة."""
+    """إرسال رسالة نصية إلى المستخدم (أو المجموعة عبر توجيه فيسبوك)."""
     params = {"access_token": PAGE_ACCESS_TOKEN}
     headers = {"Content-Type": "application/json"}
     
@@ -51,24 +48,16 @@ def send_message(recipient_id, message_text):
 def get_ai_response(text):
     """استدعاء API الذكاء الاصطناعي والحصول على الإجابة (answer) فقط."""
     try:
-        # ترميز النص لضمان عمل الروابط مع الأحرف العربية والمسافات
-        encoded_text = urllib.parse.quote(text)
-        
-        # بناء URL وإرسال الطلب
-        response = requests.get(f"{AI_API_BASE_URL}{encoded_text}")
-        response.raise_for_status() # لرفع استثناء عند وجود أخطاء في الـ API
-        
+        response = requests.get(f"{AI_API_URL}?text={text}")
+        response.raise_for_status()
         data = response.json()
         
         # استخلاص الجواب من حقل "answer" كما طلبت
         answer = data.get("answer", "عذراً، لم أتمكن من الحصول على جواب واضح من الذكاء الاصطناعي.")
         return answer
-    except requests.exceptions.HTTPError as e:
-        print(f"HTTP Error calling API: {e}. Check API status.")
-        return "حدث خطأ في الاتصال بخدمة الذكاء الاصطناعي، يرجى المحاولة لاحقاً."
     except Exception as e:
         print(f"Error calling AI API: {e}")
-        return "حدث خطأ غير متوقع أثناء معالجة الطلب."
+        return "حدث خطأ في الاتصال بخدمة الذكاء الاصطناعي."
 
 # ------------------------------------
 # مسار الـ Webhook
