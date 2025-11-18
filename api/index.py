@@ -1,118 +1,159 @@
+# api/index.py
+from flask import Flask, request, jsonify
 import os
-import json
-import urllib.parse
-from flask import Flask, request
 import requests
+import urllib.parse
+import logging
 
-# --- الإعدادات الأساسية ---
-# توكن التحقق (Webhook Verification Token)
-VERIFY_TOKEN = "boykta 2023" 
-# رمز الوصول للصفحة (يجب الحصول عليه من فيسبوك)
-# يرجى تعيينه كمتغير بيئة (Environment Variable) في Vercel
-PAGE_ACCESS_TOKEN = os.environ.get('PAGE_ACCESS_TOKEN', 'YOUR_PAGE_ACCESS_TOKEN_HERE') 
+app = Flask(__name__)
+logging.basicConfig(level=logging.INFO)
 
-# عناوين الـ API
-# المسار الأساسي لـ API gpt-5-mini
-AI_API_BASE_URL = "https://sii3.top/api/openai.php?gpt-5-mini"
+PAGE_ACCESS_TOKEN = os.environ.get("PAGE_ACCESS_TOKEN", "")
+VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN", "boykta2023")
+FB_SEND_URL = "https://graph.facebook.com/v16.0/me/messages"
 
-# الوصف الخاص بالمطور (الرد المخصص)
-AYMEN_DESCRIPTION = (
-    "نعم، aymen bourai هو مطوري! وهو: "
-    "شاب مبرمج بعمر 18 سنة، متخصص في تطوير البوتات والحلول السيبرانية، يمتلك خبرة قوية "
-    "في Python وHTML. يعمل بشكل مستقل ويتميز بدقة عالية وقدرة على ابتكار حلول ذكية وسريعة. "
+# النص الذي يرد عند السؤال عن المطور (بالضبط كما طلبت)
+DEVELOPER_REPLY = (
+    "نعم aymen bourai هو مطوري\n"
+    "شاب مبرمج بعمر 18 سنة، متخصص في تطوير البوتات والحلول السيبرانية، "
+    "يمتلك خبرة قوية في Python وHTML. يعمل بشكل مستقل ويتميز بدقة عالية وقدرة على ابتكار حلول ذكية وسريعة. "
     "يحب بناء أنظمة فعّالة وأتمتة المهام بابتكار، ويحرص دائمًا على تطوير مهاراته ومواكبة تقنيات البرمجة الحديثة."
 )
 
-app = Flask(__name__)
+# دالة مساعدة لإرسال رسالة نصية عبر Send API
+def send_text_message(recipient_id, text, quick_replies=None):
+    if not PAGE_ACCESS_TOKEN:
+        logging.error("PAGE_ACCESS_TOKEN not set in environment")
+        return False
 
-# ------------------------------------
-# دالة إرسال رسالة نصية
-# ------------------------------------
-def send_message(recipient_id, message_text):
-    """إرسال رسالة نصية إلى المستخدم أو المجموعة."""
-    params = {"access_token": PAGE_ACCESS_TOKEN}
-    headers = {"Content-Type": "application/json"}
-    
-    data = {
+    payload = {
         "recipient": {"id": recipient_id},
-        "message": {"text": message_text}
+        "message": {"text": text}
     }
 
-    requests.post(
-        "https://graph.facebook.com/v18.0/me/messages",
-        params=params,
-        headers=headers,
-        data=json.dumps(data)
-    )
+    if quick_replies:
+        payload["message"]["quick_replies"] = quick_replies
 
-# ------------------------------------
-# دالة استدعاء API الذكاء الاصطناعي
-# ------------------------------------
-def get_ai_response(text):
-    """استدعاء API الذكاء الاصطناعي والحصول على الإجابة (answer) فقط."""
-    try:
-        # تأكد من ترميز النص بشكل صحيح قبل إضافته إلى URL
-        encoded_text = urllib.parse.quote(text)
-        
-        # بناء URL وإرسال الطلب
-        response = requests.get(f"{AI_API_BASE_URL}{encoded_text}")
-        response.raise_for_status() # للتعامل مع الأخطاء مثل 4xx أو 5xx
-        
-        data = response.json()
-        
-        # استخلاص الجواب من حقل "answer" كما طلبت
-        answer = data.get("answer", "عذراً، لم أتمكن من الحصول على جواب واضح من الذكاء الاصطناعي.")
-        return answer
-    except Exception as e:
-        print(f"Error calling AI API: {e}")
-        return "حدث خطأ في الاتصال بخدمة الذكاء الاصطناعي، يرجى المحاولة لاحقاً."
+    params = {"access_token": PAGE_ACCESS_TOKEN}
+    resp = requests.post(FB_SEND_URL, params=params, json=payload, timeout=10)
+    if resp.status_code != 200:
+        logging.error("Failed to send message: %s %s", resp.status_code, resp.text)
+        return False
+    return True
 
-# ------------------------------------
-# مسار الـ Webhook
-# ------------------------------------
-@app.route('/', methods=['GET', 'POST'])
+# محاولة استخراج الجملة المفيدة من استجابة الـ API
+def extract_text_from_api_json(j):
+    # بحث عن حقول شائعة
+    for key in ("answer", "response", "text", "message", "msg", "reply", "output"):
+        if isinstance(j, dict) and key in j and isinstance(j[key], str):
+            return j[key].strip()
+    # أحيانًا تكون في choices أو data
+    if isinstance(j, dict):
+        if "choices" in j and isinstance(j["choices"], list) and len(j["choices"])>0:
+            first = j["choices"][0]
+            if isinstance(first, dict):
+                for k in ("text","message","content"):
+                    if k in first and isinstance(first[k], str):
+                        return first[k].strip()
+        if "data" in j and isinstance(j["data"], dict):
+            # تفتش داخل data
+            for k in ("text","answer","message"):
+                if k in j["data"] and isinstance(j["data"][k], str):
+                    return j["data"][k].strip()
+    # إن لم نجد شيء نعيد تمثيل نصي مصغر
+    return None
+
+# GET: التحقق من webhook
+@app.route("/", methods=["GET"])
+def verify():
+    mode = request.args.get("hub.mode")
+    token = request.args.get("hub.verify_token")
+    challenge = request.args.get("hub.challenge")
+    logging.info("Webhook verify request: mode=%s token=%s", mode, token)
+    if mode == "subscribe" and token == VERIFY_TOKEN:
+        return challenge, 200
+    return "Forbidden", 403
+
+# POST: استقبال الرسائل
+@app.route("/", methods=["POST"])
 def webhook():
-    if request.method == 'GET':
-        # --- التحقق من الـ Webhook ---
-        mode = request.args.get('hub.mode')
-        token = request.args.get('hub.verify_token')
-        challenge = request.args.get('hub.challenge')
-        
-        if mode and token and mode == 'subscribe' and token == VERIFY_TOKEN:
-            return challenge, 200
-        else:
-            return 'Verification token mismatch', 403
+    body = request.get_json()
+    logging.info("Incoming webhook body: %s", body)
 
-    elif request.method == 'POST':
-        # --- معالجة الرسائل الواردة ---
-        data = request.get_json()
+    if body is None:
+        return "Bad Request - no JSON", 400
 
-        if data.get("object") == "page":
-            for entry in data.get("entry", []):
-                for messaging_event in entry.get("messaging", []):
-                    sender_id = messaging_event["sender"]["id"]
+    # فيسبوك يضع الأحداث داخل "entry" -> "messaging"
+    for entry in body.get("entry", []):
+        for event in entry.get("messaging", []):
+            sender_id = event.get("sender", {}).get("id")
+            if not sender_id:
+                continue
 
-                    if messaging_event.get("message") and messaging_event["message"].get("text"):
-                        message_text = messaging_event["message"]["text"].strip()
-                        lower_text = message_text.lower()
-                        
-                        # --- الرد الخاص بـ aymen bourai ---
-                        # التحقق من ذكر كلمة "aymen bourai" أو السؤال عن المطور
-                        if "aymen bourai" in lower_text or \
-                           any(phrase in lower_text for phrase in ["مطورك", "من أنشئك", "من أنتجك", "من صممك"]):
-                            send_message(sender_id, AYMEN_DESCRIPTION)
-                            continue 
-                        
-                        # --- الرد الأساسي (الذكاء الاصطناعي) ---
-                        if message_text:
-                            ai_answer = get_ai_response(message_text)
-                            send_message(sender_id, ai_answer)
+            # رسالة نصية
+            message = event.get("message")
+            if message:
+                # نص المستخدم
+                user_text = None
+                if "text" in message:
+                    user_text = message["text"].strip()
+                # quick reply payload
+                if "quick_reply" in message and isinstance(message["quick_reply"], dict):
+                    qr_payload = message["quick_reply"].get("payload", "")
+                    # لو payload = DEVELOPER أو WHOAMI نستخدم نفس المنطق
+                    if qr_payload == "WHO_ARE_YOU" or qr_payload == "WHO_IS_DEV":
+                        send_text_message(sender_id, DEVELOPER_REPLY)
+                        continue
 
-        return 'EVENT_RECEIVED', 200
+                if user_text:
+                    lower = user_text.lower()
+                    # شرط خاص: إذا النص يحتوي على "aymen bourai" نرد وصف المطور
+                    if "aymen bourai" in lower or "aymenbourai" in lower.replace(" ", ""):
+                        send_text_message(sender_id, DEVELOPER_REPLY)
+                        continue
 
-# ------------------------------------
-# تشغيل التطبيق 
-# ------------------------------------
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+                    # خلاف ذلك: نسأل API الخارجي ونأخذ إجابة واحدة مفيدة من JSON
+                    try:
+                        encoded = urllib.parse.quote_plus(user_text)
+                        api_url = f"https://sii3.top/api/openai.php?gpt-5-mini={encoded}"
+                        logging.info("Calling AI API: %s", api_url)
+                        r = requests.get(api_url, timeout=12)
+                        r.raise_for_status()
+                        data = None
+                        try:
+                            data = r.json()
+                        except Exception as e:
+                            logging.warning("API did not return JSON: %s", e)
+                        reply_text = None
+                        if isinstance(data, dict):
+                            reply_text = extract_text_from_api_json(data)
+                        # إذا لم نجد نصًا داخل JSON نجرب استخدام النص الخام للـ response
+                        if not reply_text:
+                            # حاول استخراج نص بسيط من body إن كان نصيًا
+                            text_guess = r.text.strip()
+                            # احذف أقواس JSON الطويلة لو كانت
+                            if text_guess:
+                                # اختصر لو طويل جدًا
+                                if len(text_guess) > 1000:
+                                    text_guess = text_guess[:1000] + "..."
+                                reply_text = text_guess
+                        if not reply_text:
+                            reply_text = "عذراً، لم أستطع الحصول على رد من خدمة الذكاء الاصطناعي الآن."
+
+                        # أضف أزرار Quick Replies صغيرة لمساعدة المستخدم (يمكن حذفها)
+                        quick_replies = [
+                            {"content_type": "text", "title": "من أنت؟", "payload": "WHO_ARE_YOU"},
+                            {"content_type": "text", "title": "من مطورك؟", "payload": "WHO_IS_DEV"}
+                        ]
+                        send_text_message(sender_id, reply_text, quick_replies=quick_replies)
+                    except Exception as e:
+                        logging.exception("Error when calling AI API or sending message")
+                        send_text_message(sender_id, "حصل خطأ داخلي أثناء معالجة الرسالة.")
+                else:
+                    # لا يوجد نص، ربما مرفق - نرد رسالة افتراضية
+                    send_text_message(sender_id, "أستقبلت مرفقًا ولكنني أتعامل الآن مع الرسائل النصية فقط.")
+    return "EVENT_RECEIVED", 200
+
+# للإختبار المحلي (لن يستخدم في Vercel عادة)
+if __name__ == "__main__":
+    app.run(debug=True, port=int(os.environ.get("PORT", 5000)))
