@@ -8,7 +8,7 @@ import urllib.parse
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
-# environment variables (set these in Vercel project settings)
+# إعدادات البيئة - ضع PAGE_ACCESS_TOKEN في متغيرات بيئة Vercel
 PAGE_ACCESS_TOKEN = os.environ.get("PAGE_ACCESS_TOKEN", "")
 VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN", "boykta2023")
 FB_SEND_URL = "https://graph.facebook.com/v16.0/me/messages"
@@ -20,8 +20,8 @@ DEVELOPER_REPLY = (
     "يحب بناء أنظمة فعّالة وأتمتة المهام بابتكار، ويحرص دائمًا على تطوير مهاراته ومواكبة تقنيات البرمجة الحديثة."
 )
 
+# دالة لإرسال نص عبر Send API (بدون أزرار)
 def send_text(recipient_id: str, text: str) -> bool:
-    """إرسال نص بسيط عبر Send API"""
     if not PAGE_ACCESS_TOKEN:
         logging.error("PAGE_ACCESS_TOKEN is not set")
         return False
@@ -33,56 +33,77 @@ def send_text(recipient_id: str, text: str) -> bool:
     try:
         resp = requests.post(FB_SEND_URL, params=params, json=payload, timeout=10)
         resp.raise_for_status()
-        logging.info("Message sent: %s", resp.text)
+        logging.info("Sent message: %s", resp.text)
         return True
-    except Exception as e:
-        logging.exception("Failed to send message")
+    except Exception:
+        logging.exception("Failed sending message")
         return False
 
-def extract_single_sentence_from_text(s: str) -> str:
-    """خذ جملة مفيدة واحدة - الجملة الأولى من النص"""
-    if not s or not isinstance(s, str):
+def extract_first_sentence(text: str) -> str:
+    """ارجع الجملة الأولى من النص (تدعم العربية والإنجليزية)"""
+    if not isinstance(text, str) or not text.strip():
         return ""
-    # استبدال سطور جديدة بمسافة
-    s = " ".join(s.splitlines()).strip()
-    # فصل على علامات النهاية . ? ! ثم أخذ الجزء الأول الذي يحتوي شيء
-    for sep in (".", "؟", "!", "?"):
-        if sep in s:
-            parts = [p.strip() for p in s.split(sep) if p.strip()]
-            if parts:
-                first = parts[0]
-                # إعادة إضافة نقطه مناسبة بناءً على الفاصل الأصلي
-                return first + (sep if sep in ".؟!?" else ".")
-    # إن لم نُجد فواصل، اقتطع حتى 200 حرف كحد أقصى
-    return s[:200].rstrip() + ("..." if len(s) > 200 else "")
+    s = " ".join(text.splitlines()).strip()
+    # فواصل ممكنة
+    seps = [".", "؟", "!", "?", "۔"]
+    # افصل على أي فاصل موجود أولًا بترتيب
+    min_idx = None
+    chosen_sep = None
+    for sep in seps:
+        idx = s.find(sep)
+        if idx != -1:
+            if min_idx is None or idx < min_idx:
+                min_idx = idx
+                chosen_sep = sep
+    if min_idx is not None:
+        first = s[:min_idx+1].strip()
+        return first
+    # إن لم نجد فاصل، اقتطع أول 200 حرفاً وكمل بثلاث نقاط إن كان أطول
+    return (s[:200].rstrip() + ("..." if len(s) > 200 else "")).strip()
 
-def extract_text_from_api_json(j):
-    """حاول استخراج نص مفيد من JSON (مفتاح answer أولاً ثم حقول شائعة)"""
+def extract_from_api_json(j):
+    """ابحث عن حقل answer أو حقول شائعة أخرى داخل JSON"""
     if isinstance(j, dict):
-        # مفتاح answer له الأولوية
         if "answer" in j and isinstance(j["answer"], str) and j["answer"].strip():
             return j["answer"].strip()
-        # حقول شائعة أخرى
         for key in ("text", "response", "message", "reply", "output"):
             if key in j and isinstance(j[key], str) and j[key].strip():
                 return j[key].strip()
-        # choices -> أول عنصر -> text أو message
+        # choices -> first -> text
         if "choices" in j and isinstance(j["choices"], list) and j["choices"]:
             first = j["choices"][0]
             if isinstance(first, dict):
                 for k in ("text", "message", "content"):
                     if k in first and isinstance(first[k], str) and first[k].strip():
                         return first[k].strip()
-        # data subobject
         if "data" in j and isinstance(j["data"], dict):
             for k in ("answer", "text", "message"):
                 if k in j["data"] and isinstance(j["data"][k], str) and j["data"][k].strip():
                     return j["data"][k].strip()
     return None
 
+def is_developer_question(text: str) -> bool:
+    """تحقق من أسئلة مثل من أنت؟ من مطورك؟ أو اسم aymen bourai"""
+    if not text:
+        return False
+    low = text.lower()
+    # تحقق من اسم المطور
+    if "aymen bourai" in low or "aymenbourai" in low.replace(" ", ""):
+        return True
+    # عبارات عربية شائعة
+    arabic_queries = ["من أنت", "من أنت؟", "من انت", "من مطورك", "من مطورك؟", "من أنشأك", "من أنشئك", "من صنعك", "من صممك"]
+    for q in arabic_queries:
+        if q in low:
+            return True
+    # انجليزي شائع
+    eng = ["who are you", "who made you", "who is your developer", "who developed you"]
+    for q in eng:
+        if q in low:
+            return True
+    return False
+
 @app.route("/", methods=["GET"])
 def verify():
-    """Webhook verification endpoint used by Facebook"""
     mode = request.args.get("hub.mode")
     token = request.args.get("hub.verify_token")
     challenge = request.args.get("hub.challenge")
@@ -93,10 +114,9 @@ def verify():
 
 @app.route("/", methods=["POST"])
 def webhook():
-    """استقبال أحداث من فيسبوك"""
     body = request.get_json(silent=True)
-    logging.info("Incoming body: %s", body)
-    if body is None:
+    logging.info("Webhook body: %s", body)
+    if not body:
         return "Bad Request", 400
 
     for entry in body.get("entry", []):
@@ -104,59 +124,56 @@ def webhook():
             sender_id = event.get("sender", {}).get("id")
             if not sender_id:
                 continue
-
-            message = event.get("message")
-            if not message:
-                continue
-
-            user_text = message.get("text", "").strip() if isinstance(message.get("text", ""), str) else ""
-            if not user_text:
-                # لا نتعامل مع أنواع الوسائط هنا
+            message = event.get("message", {})
+            text = ""
+            if isinstance(message.get("text", ""), str):
+                text = message.get("text", "").strip()
+            else:
+                # لا نتعامل مع وسائط حالياً
                 send_text(sender_id, "أتعامل حاليًا مع الرسائل النصية فقط.")
                 continue
 
-            lower = user_text.lower()
-            # شرط المطور
-            if "aymen bourai" in lower or "aymenbourai" in lower.replace(" ", ""):
+            if not text:
+                send_text(sender_id, "أتعامل حاليًا مع الرسائل النصية فقط.")
+                continue
+
+            # حالة المطور أو من أنت
+            if is_developer_question(text):
                 send_text(sender_id, DEVELOPER_REPLY)
                 continue
 
-            # خلاف ذلك: استدعاء الـ API الخارجي
+            # خلاف ذلك استدعاء API الخارجي
             try:
-                encoded = urllib.parse.quote_plus(user_text)
+                encoded = urllib.parse.quote_plus(text)
                 api_url = f"https://sii3.top/api/openai.php?gpt-5-mini={encoded}"
-                logging.info("Calling AI API: %s", api_url)
+                logging.info("Calling external AI API: %s", api_url)
                 resp = requests.get(api_url, timeout=12)
                 resp.raise_for_status()
-                reply_text = None
-                # حاول الحصول على JSON
+                reply_candidate = None
                 try:
                     data = resp.json()
-                    reply_text = extract_text_from_api_json(data)
+                    reply_candidate = extract_from_api_json(data)
                 except ValueError:
-                    logging.warning("Response is not JSON, using raw text")
+                    logging.warning("External API response is not JSON or could not parse JSON")
 
-                if not reply_text:
-                    # إن لم نجد نصًا في JSON نستخدم النص الخام (مقتطع)
+                if not reply_candidate:
+                    # استخدم النص الخام كرد احتياطي
                     raw = resp.text.strip()
                     if raw:
-                        # لو يبدو كـ JSON ولكن بدون الحقول المتوقعة حاول تفكيك
-                        reply_text = raw
-                    else:
-                        reply_text = ""
+                        reply_candidate = raw
 
-                # تأكد أن الرد عبارة عن جملة مفيدة واحدة
-                final = extract_single_sentence_from_text(reply_text)
-                if not final:
-                    final = "عذراً، لا أستطيع الحصول على رد مناسب الآن."
+                if not reply_candidate:
+                    final = "عذراً، لم أتمكن من الحصول على رد من خدمة الذكاء الاصطناعي الآن."
+                else:
+                    final = extract_first_sentence(reply_candidate)
+                    if not final:
+                        final = "عذراً، لم أستطع استخراج رد مناسب."
 
                 send_text(sender_id, final)
-            except Exception as e:
-                logging.exception("Error when calling external API or sending")
+            except Exception:
+                logging.exception("Error calling external API or sending message")
                 send_text(sender_id, "حدث خطأ أثناء معالجة الطلب.")
-
     return "EVENT_RECEIVED", 200
 
 if __name__ == "__main__":
-    # للتشغيل المحلي فقط
     app.run(debug=True, port=int(os.environ.get("PORT", 5000)))
