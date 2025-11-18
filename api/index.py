@@ -10,7 +10,7 @@ VERIFY_TOKEN = "boykta 2023"
 PAGE_ACCESS_TOKEN = os.environ.get('PAGE_ACCESS_TOKEN', 'YOUR_PAGE_ACCESS_TOKEN_HERE') 
 
 # عناوين الـ API
-AI_API_URL = "https://sii3.top/api/openai.php"
+AI_API_URL = "https://sii3.top/api/openai.php?gpt-5-mini="
 
 # الوصف الخاص بالمطور (الرد المخصص)
 AYMEN_DESCRIPTION = (
