@@ -1,5 +1,6 @@
 import os
 import json
+import urllib.parse
 from flask import Flask, request
 import requests
 
@@ -10,7 +11,7 @@ VERIFY_TOKEN = "boykta 2023"
 PAGE_ACCESS_TOKEN = os.environ.get('PAGE_ACCESS_TOKEN', 'YOUR_PAGE_ACCESS_TOKEN_HERE') 
 
 # عناوين الـ API
-AI_API_URL = "https://sii3.top/api/grok4.php?text="
+AI_API_BASE_URL = "https://sii3.top/api/grok4.php?text="
 
 # الوصف الخاص بالمطور (الرد المخصص)
 AYMEN_DESCRIPTION = (
@@ -26,7 +27,7 @@ app = Flask(__name__)
 # دالة إرسال رسالة نصية
 # ------------------------------------
 def send_message(recipient_id, message_text):
-    """إرسال رسالة نصية إلى المستخدم (أو المجموعة عبر توجيه فيسبوك)."""
+    """إرسال رسالة نصية إلى المستخدم."""
     params = {"access_token": PAGE_ACCESS_TOKEN}
     headers = {"Content-Type": "application/json"}
     
@@ -46,18 +47,35 @@ def send_message(recipient_id, message_text):
 # دالة استدعاء API الذكاء الاصطناعي
 # ------------------------------------
 def get_ai_response(text):
-    """استدعاء API الذكاء الاصطناعي والحصول على الإجابة (answer) فقط."""
+    """استدعاء API الذكاء الاصطناعي والحصول على الإجابة (response) فقط."""
     try:
-        response = requests.get(f"{AI_API_URL}?text={text}")
+        encoded_text = urllib.parse.quote(text)
+        
+        response = requests.get(f"{AI_API_BASE_URL}{encoded_text}")
         response.raise_for_status()
+        
         data = response.json()
         
-        # استخلاص الجواب من حقل "answer" كما طلبت
-        answer = data.get("answer", "عذراً، لم أتمكن من الحصول على جواب واضح من الذكاء الاصطناعي.")
+        # ******** التغيير هنا: استخلاص الحقل "response" ********
+        answer = data.get("response", None) 
+        
+        if answer is None:
+            # إذا لم يتم العثور على حقل "response"، نتحقق من حقل الخطأ الذي قد يظهر
+            error_message = data.get("error", "لم يتم العثور على حقل الرد (response).")
+            # قد يكون الـ API يرد بخطأ مثل "Model not found" مباشرة
+            if isinstance(error_message, str):
+                 return f"عذراً، لم أتمكن من الحصول على جواب: ({error_message})"
+            else:
+                 return "عذراً، لم أتمكن من الحصول على جواب واضح."
+
+
         return answer
+    except requests.exceptions.HTTPError as e:
+        print(f"HTTP Error calling API: {e}. Check API status.")
+        return "حدث خطأ في الاتصال بخدمة الذكاء الاصطناعي، يرجى المحاولة لاحقاً."
     except Exception as e:
         print(f"Error calling AI API: {e}")
-        return "حدث خطأ في الاتصال بخدمة الذكاء الاصطناعي."
+        return "حدث خطأ غير متوقع أثناء معالجة الطلب."
 
 # ------------------------------------
 # مسار الـ Webhook
@@ -89,7 +107,6 @@ def webhook():
                         lower_text = message_text.lower()
                         
                         # --- الرد الخاص بـ aymen bourai ---
-                        # التحقق من ذكر كلمة "aymen bourai" أو السؤال عن المطور
                         if "aymen bourai" in lower_text or \
                            any(phrase in lower_text for phrase in ["مطورك", "من أنشئك", "من أنتجك", "من صممك"]):
                             send_message(sender_id, AYMEN_DESCRIPTION)
