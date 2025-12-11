@@ -1,127 +1,46 @@
-import os
-import json
-import urllib.parse
-from flask import Flask, request
+from flask import Flask, request, Response
 import requests
 
-# --- الإعدادات الأساسية ---
-# توكن التحقق (Webhook Verification Token)
-VERIFY_TOKEN = "boykta 2023" 
-# رمز الوصول للصفحة (يجب الحصول عليه من فيسبوك)
-PAGE_ACCESS_TOKEN = os.environ.get('PAGE_ACCESS_TOKEN', 'YOUR_PAGE_ACCESS_TOKEN_HERE') 
+app = Flask(name)
 
-# عناوين الـ API
-AI_API_BASE_URL = "https://sii3.top/api/grok4.php?text="
+# رابط استضافتك الأصلية (التي لا تدعم HTTPS)
+# هذا هو الرابط الذي سيحول له Vercel الطلبات
+TARGET_SERVER_URL = "http://noel.hidencloud.com:25151/webhook"
 
-# الوصف الخاص بالمطور (الرد المخصص)
-AYMEN_DESCRIPTION = (
-    "نعم، aymen bourai هو مطوري! وهو: "
-    "شاب مبرمج بعمر 18 سنة، متخصص في تطوير البوتات والحلول السيبرانية، يمتلك خبرة قوية "
-    "في Python وHTML. يعمل بشكل مستقل ويتميز بدقة عالية وقدرة على ابتكار حلول ذكية وسريعة. "
-    "يحب بناء أنظمة فعّالة وأتمتة المهام بابتكار، ويحرص دائمًا على تطوير مهاراته ومواكبة تقنيات البرمجة الحديثة."
-)
-
-app = Flask(__name__)
-
-# ------------------------------------
-# دالة إرسال رسالة نصية
-# ------------------------------------
-def send_message(recipient_id, message_text):
-    """إرسال رسالة نصية إلى المستخدم."""
-    params = {"access_token": PAGE_ACCESS_TOKEN}
-    headers = {"Content-Type": "application/json"}
-    
-    data = {
-        "recipient": {"id": recipient_id},
-        "message": {"text": message_text}
-    }
-
-    requests.post(
-        "https://graph.facebook.com/v18.0/me/messages",
-        params=params,
-        headers=headers,
-        data=json.dumps(data)
-    )
-
-# ------------------------------------
-# دالة استدعاء API الذكاء الاصطناعي
-# ------------------------------------
-def get_ai_response(text):
-    """استدعاء API الذكاء الاصطناعي والحصول على الإجابة (response) فقط."""
+@app.route('/webhook', methods=['GET', 'POST'])
+def proxy_webhook():
     try:
-        encoded_text = urllib.parse.quote(text)
-        
-        response = requests.get(f"{AI_API_BASE_URL}{encoded_text}")
-        response.raise_for_status()
-        
-        data = response.json()
-        
-        # ******** التغيير هنا: استخلاص الحقل "response" ********
-        answer = data.get("response", None) 
-        
-        if answer is None:
-            # إذا لم يتم العثور على حقل "response"، نتحقق من حقل الخطأ الذي قد يظهر
-            error_message = data.get("error", "لم يتم العثور على حقل الرد (response).")
-            # قد يكون الـ API يرد بخطأ مثل "Model not found" مباشرة
-            if isinstance(error_message, str):
-                 return f"عذراً، لم أتمكن من الحصول على جواب: ({error_message})"
-            else:
-                 return "عذراً، لم أتمكن من الحصول على جواب واضح."
+        # الحالة الأولى: التحقق (Verification) - طلب GET
+        if request.method == 'GET':
+            # نأخذ البارامترات التي أرسلها فيسبوك (hub.verify_token, hub.challenge)
+            params = request.args
+            
+            # نرسلها كما هي للسيرفر الأصلي
+            resp = requests.get(TARGET_SERVER_URL, params=params, timeout=10)
+            
+            # نعيد إجابة السيرفر الأصلي إلى فيسبوك
+            return Response(resp.content, status=resp.status_code, content_type=resp.headers.get('Content-Type'))
 
+        # الحالة الثانية: استلام الرسائل (Messages) - طلب POST
+        elif request.method == 'POST':
+            # نأخذ البيانات (JSON)
+            json_data = request.get_json()
+            
+            # نمررها للسيرفر الأصلي
+            resp = requests.post(TARGET_SERVER_URL, json=json_data, timeout=10)
+            
+            # نعيد إجابة السيرفر لفيسبوك
+            return Response(resp.content, status=resp.status_code, content_type=resp.headers.get('Content-Type'))
 
-        return answer
-    except requests.exceptions.HTTPError as e:
-        print(f"HTTP Error calling API: {e}. Check API status.")
-        return "حدث خطأ في الاتصال بخدمة الذكاء الاصطناعي، يرجى المحاولة لاحقاً."
+    except requests.exceptions.ConnectionError:
+        return "❌ فشل الاتصال بالسيرفر الأصلي (تأكد أن الاستضافة تعمل)", 502
     except Exception as e:
-        print(f"Error calling AI API: {e}")
-        return "حدث خطأ غير متوقع أثناء معالجة الطلب."
+        return f"❌ حدث خطأ في الوسيط: {str(e)}", 500
 
-# ------------------------------------
-# مسار الـ Webhook
-# ------------------------------------
-@app.route('/', methods=['GET', 'POST'])
-def webhook():
-    if request.method == 'GET':
-        # --- التحقق من الـ Webhook ---
-        mode = request.args.get('hub.mode')
-        token = request.args.get('hub.verify_token')
-        challenge = request.args.get('hub.challenge')
-        
-        if mode and token and mode == 'subscribe' and token == VERIFY_TOKEN:
-            return challenge, 200
-        else:
-            return 'Verification token mismatch', 403
+@app.route('/', methods=['GET'])
+def home():
+    return "✅ وسيط Vercel يعمل بنجاح! ويوجه الطلبات إلى noel.hidencloud.com", 200
 
-    elif request.method == 'POST':
-        # --- معالجة الرسائل الواردة ---
-        data = request.get_json()
-
-        if data.get("object") == "page":
-            for entry in data.get("entry", []):
-                for messaging_event in entry.get("messaging", []):
-                    sender_id = messaging_event["sender"]["id"]
-
-                    if messaging_event.get("message") and messaging_event["message"].get("text"):
-                        message_text = messaging_event["message"]["text"].strip()
-                        lower_text = message_text.lower()
-                        
-                        # --- الرد الخاص بـ aymen bourai ---
-                        if "aymen bourai" in lower_text or \
-                           any(phrase in lower_text for phrase in ["مطورك", "من أنشئك", "من أنتجك", "من صممك"]):
-                            send_message(sender_id, AYMEN_DESCRIPTION)
-                            continue 
-                        
-                        # --- الرد الأساسي (الذكاء الاصطناعي) ---
-                        if message_text:
-                            ai_answer = get_ai_response(message_text)
-                            send_message(sender_id, ai_answer)
-
-        return 'EVENT_RECEIVED', 200
-
-# ------------------------------------
-# تشغيل التطبيق 
-# ------------------------------------
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+# هذا السطر ضروري لـ Vercel
+if name == 'main':
+    app.run()
